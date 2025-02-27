@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS region to deploy resources"
   type        = string
-  default     = "us-east-1" 
+  default     = "us-east-1"
 }
 
 variable "vpc_name" {
@@ -37,7 +37,7 @@ variable "environment" {
 variable "app_port" {
   description = "Port on which the application runs"
   type        = number
-  default     = 8080 
+  default     = 8080
 }
 
 variable "instance_type" {
