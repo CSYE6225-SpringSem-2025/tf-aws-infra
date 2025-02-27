@@ -9,7 +9,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.aws_region
+  region = var.aws_region
 }
 
 # Data source for AZs
@@ -162,10 +162,10 @@ resource "aws_instance" "app_instance" {
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.public[0].id
   vpc_security_group_ids = [aws_security_group.app_sg.id]
-  
+
   # Disable termination protection as per requirements
   disable_api_termination = false
-  
+
   root_block_device {
     volume_size           = var.root_volume_size
     volume_type           = var.root_volume_type
