@@ -9,8 +9,7 @@ terraform {
 }
 
 provider "aws" {
-  alias  = "profile"
-  region = var.aws_region
+  region  = var.aws_region
 }
 
 # Data source for AZs
@@ -18,12 +17,13 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+
+
 # VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
-
 
   tags = {
     Name        = var.vpc_name
@@ -56,7 +56,6 @@ resource "aws_subnet" "public" {
   }
 }
 
-# Private Subnets
 resource "aws_subnet" "private" {
   count             = length(var.private_subnet_cidrs)
   vpc_id            = aws_vpc.main.id
@@ -105,4 +104,76 @@ resource "aws_route_table_association" "private" {
   count          = length(var.private_subnet_cidrs)
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private.id
+}
+
+resource "aws_security_group" "app_sg" {
+  name        = "application-security-group"
+  description = "Security group for web application instances"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH access"
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP access"
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS access"
+  }
+
+  ingress {
+    from_port   = var.app_port
+    to_port     = var.app_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Application port access"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+
+  tags = {
+    Name        = "application-security-group"
+    Environment = var.environment
+  }
+}
+
+resource "aws_instance" "app_instance" {
+  ami                    = var.ami_id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public[0].id
+  vpc_security_group_ids = [aws_security_group.app_sg.id]
+  
+  # Disable termination protection as per requirements
+  disable_api_termination = false
+  
+  root_block_device {
+    volume_size           = var.root_volume_size
+    volume_type           = var.root_volume_type
+    delete_on_termination = true
+  }
+
+  tags = {
+    Name        = "webapp-instance"
+    Environment = var.environment
+  }
 }
