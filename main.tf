@@ -9,7 +9,7 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
   profile = "saurabhdemo"
 }
 
@@ -25,7 +25,7 @@ data "aws_ami" "custom_app_ami" {
 
   filter {
     name   = "name"
-    values = ["*"]  # Broader filter to find your AMIs
+    values = ["*"] # Broader filter to find your AMIs
   }
 }
 
