@@ -25,7 +25,7 @@ data "aws_ami" "custom_app_ami" {
 
   filter {
     name   = "name"
-    values = ["csye6225-*"]
+    values = ["*"]  # Broader filter to find your AMIs
   }
 }
 
@@ -390,9 +390,28 @@ chmod 644 /etc/environment
 # Reload environment variables
 source /etc/environment
 
+# Create log directory if it doesn't exist
+mkdir -p /var/log/webapp
+chmod 755 /var/log/webapp
+chown saurabh_user:saurabh_group /var/log/webapp
+
+# Start CloudWatch agent
+echo "Starting CloudWatch agent..."
+systemctl enable amazon-cloudwatch-agent
+systemctl restart amazon-cloudwatch-agent
+
 # Ensure the webapp service starts automatically
 systemctl enable webapp
 systemctl restart webapp
+
+# Print status for troubleshooting purposes
+echo "CloudWatch agent status:"
+systemctl status amazon-cloudwatch-agent --no-pager
+
+echo "Webapp service status:"
+systemctl status webapp --no-pager
+
+echo "EC2 user data script completed"
 EOF
   )
 
@@ -402,4 +421,41 @@ EOF
   }
 
   depends_on = [aws_db_instance.csye6225_db]
+}
+
+# CloudWatch IAM Policy
+resource "aws_iam_policy" "cloudwatch_policy" {
+  name        = "cloudwatch_access_policy"
+  description = "Policy for EC2 instance to access CloudWatch for logging and metrics"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "cloudwatch:PutMetricData",
+          "ec2:DescribeVolumes",
+          "ec2:DescribeTags",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
+          "logs:CreateLogStream",
+          "logs:CreateLogGroup"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "CloudWatch Access Policy"
+    Environment = var.environment
+  }
+}
+
+# Attach CloudWatch policy to EC2 role
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy_attachment" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.cloudwatch_policy.arn
 }
