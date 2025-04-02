@@ -101,3 +101,35 @@ variable "db_password" {
   sensitive   = true
 }
 
+
+# Domain configuration variables
+variable "domain_name" {
+  description = "Your registered domain name"
+  type        = string
+  default     = "yourdomain.com" # Replace with your actual domain
+}
+
+variable "subdomain" {
+  description = "Subdomain prefix for the environment"
+  type        = string
+  default     = "demo" # Use 'dev' for development environment and 'demo' for demo environment
+}
+
+# SES DKIM variables
+variable "ses_dkim_1" {
+  description = "First DKIM token from SES"
+  type        = string
+  default     = "example1" # Replace with actual DKIM token from SES
+}
+
+variable "ses_dkim_2" {
+  description = "Second DKIM token from SES"
+  type        = string
+  default     = "example2" # Replace with actual DKIM token from SES
+}
+
+variable "ses_dkim_3" {
+  description = "Third DKIM token from SES"
+  type        = string
+  default     = "example3" # Replace with actual DKIM token from SES
+}
