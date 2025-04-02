@@ -9,7 +9,7 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
   profile = "saurabhdemo"
 }
 
@@ -25,7 +25,7 @@ data "aws_ami" "custom_app_ami" {
 
   filter {
     name   = "name"
-    values = ["*"]  # Broader filter to find your AMIs
+    values = ["*"] # Broader filter to find your AMIs
   }
 }
 
@@ -544,7 +544,7 @@ resource "aws_autoscaling_group" "app_asg" {
 
   vpc_zone_identifier = aws_subnet.public[*].id
   target_group_arns   = [aws_lb_target_group.app_tg.arn]
-  
+
   launch_template {
     id      = aws_launch_template.app_launch_template.id
     version = "$Latest"
@@ -593,7 +593,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
   statistic           = "Average"
   threshold           = 18
   alarm_description   = "Scale up when CPU exceeds 5%"
-  
+
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.app_asg.name
   }
@@ -609,9 +609,9 @@ resource "aws_cloudwatch_metric_alarm" "low_cpu" {
   namespace           = "AWS/EC2"
   period              = 60
   statistic           = "Average"
-  threshold           = 11
-  alarm_description   = "Scale down when CPU is below 3%"
-  
+  threshold           = 12
+  alarm_description   = "Scale down when CPU is below3%"
+
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.app_asg.name
   }
