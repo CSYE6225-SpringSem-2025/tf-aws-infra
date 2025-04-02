@@ -10,6 +10,7 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+  profile = "saurabhdemo"
 }
 
 # Data source for AZs
@@ -24,7 +25,7 @@ data "aws_ami" "custom_app_ami" {
 
   filter {
     name   = "name"
-    values = ["*"] # Broader filter to find your AMIs
+    values = ["*"]  # Broader filter to find your AMIs
   }
 }
 
@@ -116,6 +117,42 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
+# Load Balancer Security Group
+resource "aws_security_group" "lb_sg" {
+  name        = "load-balancer-security-group"
+  description = "Security group for application load balancer"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTP access from anywhere"
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS access from anywhere"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+
+  tags = {
+    Name        = "load-balancer-security-group"
+    Environment = var.environment
+  }
+}
+
 # Application Security Group
 resource "aws_security_group" "app_sg" {
   name        = "application-security-group"
@@ -131,27 +168,11 @@ resource "aws_security_group" "app_sg" {
   }
 
   ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP access"
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS access"
-  }
-
-  ingress {
-    from_port   = var.app_port
-    to_port     = var.app_port
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Application port access"
+    from_port       = var.app_port
+    to_port         = var.app_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lb_sg.id]
+    description     = "Application port access from load balancer"
   }
 
   egress {
@@ -351,25 +372,111 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
-# EC2 Instance
-resource "aws_instance" "app_instance" {
-  ami                    = data.aws_ami.custom_app_ami.id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.public[0].id
-  vpc_security_group_ids = [aws_security_group.app_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
+# CloudWatch IAM Policy
+resource "aws_iam_policy" "cloudwatch_policy" {
+  name        = "cloudwatch_access_policy"
+  description = "Policy for EC2 instance to access CloudWatch for logging and metrics"
 
-  # Disable termination protection as per requirements
-  disable_api_termination = false
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "cloudwatch:PutMetricData",
+          "ec2:DescribeVolumes",
+          "ec2:DescribeTags",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
+          "logs:CreateLogStream",
+          "logs:CreateLogGroup"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
 
-  root_block_device {
-    volume_size           = var.root_volume_size
-    volume_type           = var.root_volume_type
-    delete_on_termination = true
-    encrypted             = true
+  tags = {
+    Name        = "CloudWatch Access Policy"
+    Environment = var.environment
+  }
+}
+
+# Attach CloudWatch policy to EC2 role
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy_attachment" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.cloudwatch_policy.arn
+}
+
+# Application Load Balancer
+resource "aws_lb" "app_lb" {
+  name               = "app-load-balancer"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.lb_sg.id]
+  subnets            = aws_subnet.public[*].id
+
+  enable_deletion_protection = false
+
+  tags = {
+    Name        = "application-load-balancer"
+    Environment = var.environment
+  }
+}
+
+# Target Group for Load Balancer
+resource "aws_lb_target_group" "app_tg" {
+  name     = "app-target-group"
+  port     = var.app_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/"
+    port                = "traffic-port"
+    protocol            = "HTTP"
   }
 
-  # User data to configure database connection
+  tags = {
+    Name        = "app-target-group"
+    Environment = var.environment
+  }
+}
+
+# Load Balancer Listener
+resource "aws_lb_listener" "app_listener" {
+  load_balancer_arn = aws_lb.app_lb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app_tg.arn
+  }
+}
+
+# Launch Template for Auto Scaling Group
+resource "aws_launch_template" "app_launch_template" {
+  name          = "csye6225_asg"
+  image_id      = data.aws_ami.custom_app_ami.id
+  instance_type = var.instance_type
+  key_name      = var.key_name
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.app_sg.id]
+  }
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_profile.name
+  }
+
   user_data = base64encode(<<-EOF
 #!/bin/bash
 # Create environment file for application
@@ -414,47 +521,113 @@ echo "EC2 user data script completed"
 EOF
   )
 
-  tags = {
-    Name        = "webapp-instance"
-    Environment = var.environment
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name        = "webapp-instance"
+      Environment = var.environment
+    }
   }
 
-  depends_on = [aws_db_instance.csye6225_db]
-}
-
-# CloudWatch IAM Policy
-resource "aws_iam_policy" "cloudwatch_policy" {
-  name        = "cloudwatch_access_policy"
-  description = "Policy for EC2 instance to access CloudWatch for logging and metrics"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "cloudwatch:PutMetricData",
-          "ec2:DescribeVolumes",
-          "ec2:DescribeTags",
-          "logs:PutLogEvents",
-          "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups",
-          "logs:CreateLogStream",
-          "logs:CreateLogGroup"
-        ]
-        Effect   = "Allow"
-        Resource = "*"
-      }
-    ]
-  })
-
   tags = {
-    Name        = "CloudWatch Access Policy"
+    Name        = "app-launch-template"
     Environment = var.environment
   }
 }
 
-# Attach CloudWatch policy to EC2 role
-resource "aws_iam_role_policy_attachment" "cloudwatch_policy_attachment" {
-  role       = aws_iam_role.ec2_s3_role.name
-  policy_arn = aws_iam_policy.cloudwatch_policy.arn
+# Auto Scaling Group
+resource "aws_autoscaling_group" "app_asg" {
+  name             = "app-auto-scaling-group"
+  min_size         = 3
+  max_size         = 5
+  desired_capacity = 3
+
+  vpc_zone_identifier = aws_subnet.public[*].id
+  target_group_arns   = [aws_lb_target_group.app_tg.arn]
+  
+  launch_template {
+    id      = aws_launch_template.app_launch_template.id
+    version = "$Latest"
+  }
+
+  default_cooldown = 60
+
+  tag {
+    key                 = "Name"
+    value               = "webapp-asg-instance"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.environment
+    propagate_at_launch = true
+  }
+}
+
+# Auto Scaling Policies
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "scale-up-policy"
+  autoscaling_group_name = aws_autoscaling_group.app_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = 1
+  cooldown               = 60
+}
+
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "scale-down-policy"
+  autoscaling_group_name = aws_autoscaling_group.app_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = -1
+  cooldown               = 60
+}
+
+# CloudWatch Alarms for Auto Scaling
+resource "aws_cloudwatch_metric_alarm" "high_cpu" {
+  alarm_name          = "high-cpu-usage"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 18
+  alarm_description   = "Scale up when CPU exceeds 5%"
+  
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_up.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "low_cpu" {
+  alarm_name          = "low-cpu-usage"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 10
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 11
+  alarm_description   = "Scale down when CPU is below 3%"
+  
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.app_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_down.arn]
+}
+
+# Route53 Record to point to Load Balancer
+resource "aws_route53_record" "app_dns" {
+  zone_id = var.route53_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app_lb.dns_name
+    zone_id                = aws_lb.app_lb.zone_id
+    evaluate_target_health = true
+  }
 }

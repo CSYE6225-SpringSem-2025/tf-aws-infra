@@ -133,3 +133,13 @@ variable "ses_dkim_3" {
   type        = string
   default     = "example3" # Replace with actual DKIM token from SES
 }
+variable "key_name" {
+  description = "Name of the SSH key pair to use with EC2 instances"
+  type        = string
+}
+
+variable "route53_zone_id" {
+  description = "The Route53 Hosted Zone ID where DNS records will be created"
+  type        = string
+}
+
