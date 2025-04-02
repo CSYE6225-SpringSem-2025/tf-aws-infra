@@ -9,8 +9,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.aws_region
-  profile = "saurabhdemo"
+  region = var.aws_region
 }
 
 # Data source for AZs
