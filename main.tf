@@ -33,8 +33,8 @@ resource "aws_kms_key" "ec2_key" {
   description             = "KMS key for EC2 encryption"
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  is_enabled              = true  # Explicitly enable the key
-  
+  is_enabled              = true # Explicitly enable the key
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -94,7 +94,7 @@ resource "aws_kms_key" "ec2_key" {
         Resource = "*",
         Condition = {
           Bool = {
-            "kms:GrantIsForAWSResource": "true"
+            "kms:GrantIsForAWSResource" : "true"
           }
         }
       }
@@ -723,7 +723,7 @@ resource "aws_lb_listener" "app_listener" {
 
 # Launch Template for Auto Scaling Group with KMS encryption
 resource "aws_launch_template" "app_launch_template" {
-  name          = "app-launch-template"  # Changed from "csye6225_asg" for consistency
+  name          = "app-launch-template" # Changed from "csye6225_asg" for consistency
   image_id      = var.ami_id
   instance_type = var.instance_type
   key_name      = var.key_name
@@ -809,12 +809,12 @@ EOF
     Environment = var.environment
   }
 
-  depends_on = [ aws_kms_key.ec2_key, aws_db_instance.csye6225_db, aws_s3_bucket.app_bucket ]
+  depends_on = [aws_kms_key.ec2_key, aws_db_instance.csye6225_db, aws_s3_bucket.app_bucket]
 }
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "app_asg" {
-  name             = "app-auto-scaling-group"  # Removed "-new" suffix
+  name             = "app-auto-scaling-group" # Removed "-new" suffix
   min_size         = 1
   max_size         = 2
   desired_capacity = 2
@@ -840,8 +840,8 @@ resource "aws_autoscaling_group" "app_asg" {
     value               = var.environment
     propagate_at_launch = true
   }
-  
-  depends_on = [ aws_launch_template.app_launch_template ]
+
+  depends_on = [aws_launch_template.app_launch_template]
 }
 
 # Auto Scaling Policies
