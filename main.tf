@@ -13,6 +13,78 @@ provider "aws" {
   profile = "saurabhdemo"
 }
 
+# KMS Key for EC2 encryption
+resource "aws_kms_key" "ec2_key" {
+  description             = "KMS key for EC2 encryption"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  tags = {
+    Name        = "ec2-encryption-key"
+    Environment = var.environment
+  }
+}
+
+# KMS Key alias for EC2
+resource "aws_kms_alias" "ec2_key_alias" {
+  name          = "alias/${var.environment}-ec2-key"
+  target_key_id = aws_kms_key.ec2_key.key_id
+}
+
+# KMS Key for RDS encryption
+resource "aws_kms_key" "rds_key" {
+  description             = "KMS key for RDS encryption"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  tags = {
+    Name        = "rds-encryption-key"
+    Environment = var.environment
+  }
+}
+
+# KMS Key alias for RDS
+resource "aws_kms_alias" "rds_key_alias" {
+  name          = "alias/${var.environment}-rds-key"
+  target_key_id = aws_kms_key.rds_key.key_id
+}
+
+# KMS Key for S3 encryption
+resource "aws_kms_key" "s3_key" {
+  description             = "KMS key for S3 encryption"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  tags = {
+    Name        = "s3-encryption-key"
+    Environment = var.environment
+  }
+}
+
+# KMS Key alias for S3
+resource "aws_kms_alias" "s3_key_alias" {
+  name          = "alias/${var.environment}-s3-key"
+  target_key_id = aws_kms_key.s3_key.key_id
+}
+
+# KMS Key for Secrets Manager
+resource "aws_kms_key" "secrets_key" {
+  description             = "KMS key for Secrets Manager encryption"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  tags = {
+    Name        = "secrets-encryption-key"
+    Environment = var.environment
+  }
+}
+
+# KMS Key alias for Secrets Manager
+resource "aws_kms_alias" "secrets_key_alias" {
+  name          = "alias/${var.environment}-secrets-key"
+  target_key_id = aws_kms_key.secrets_key.key_id
+}
+
 # Data source for AZs
 data "aws_availability_zones" "available" {
   state = "available"
@@ -20,13 +92,37 @@ data "aws_availability_zones" "available" {
 
 # Data source for the custom AMI
 data "aws_ami" "custom_app_ami" {
-  most_recent = true
-  owners      = ["self"]
+  owners = ["self"]
 
   filter {
-    name   = "name"
-    values = ["*"] # Broader filter to find your AMIs
+    name   = "image-id"
+    values = ["ami-0ae4d60b84a0b35ba"]
   }
+}
+
+# Random password for database
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+# Secrets Manager secret for database password
+resource "aws_secretsmanager_secret" "db_password_secret" {
+  name                    = "${var.environment}/database/password"
+  kms_key_id              = aws_kms_key.secrets_key.arn
+  recovery_window_in_days = 0 
+
+  tags = {
+    Name        = "database-password-secret"
+    Environment = var.environment
+  }
+}
+
+# Store the database password in Secrets Manager
+resource "aws_secretsmanager_secret_version" "db_password_version" {
+  secret_id     = aws_secretsmanager_secret.db_password_secret.id
+  secret_string = random_password.db_password.result
 }
 
 # VPC
@@ -131,13 +227,14 @@ resource "aws_security_group" "lb_sg" {
     description = "HTTP access from anywhere"
   }
 
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS access from anywhere"
-  }
+  # SSL/HTTPS ingress rule - commented out until SSL cert is available
+  # ingress {
+  #   from_port   = 443
+  #   to_port     = 443
+  #   protocol    = "tcp"
+  #   cidr_blocks = ["0.0.0.0/0"]
+  #   description = "HTTPS access from anywhere"
+  # }
 
   egress {
     from_port   = 0
@@ -230,13 +327,14 @@ resource "aws_s3_bucket" "app_bucket" {
   }
 }
 
-# S3 Bucket encryption
+# S3 Bucket encryption with KMS
 resource "aws_s3_bucket_server_side_encryption_configuration" "bucket_encryption" {
   bucket = aws_s3_bucket.app_bucket.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      kms_master_key_id = aws_kms_key.s3_key.arn
+      sse_algorithm     = "aws:kms"
     }
   }
 }
@@ -288,7 +386,7 @@ resource "aws_db_parameter_group" "db_parameter_group" {
   }
 }
 
-# RDS Instance
+# RDS Instance with KMS encryption
 resource "aws_db_instance" "csye6225_db" {
   identifier             = "csye6225"
   engine                 = var.db_engine
@@ -297,7 +395,7 @@ resource "aws_db_instance" "csye6225_db" {
   allocated_storage      = 20
   db_name                = "webapp"
   username               = "csye6225"
-  password               = var.db_password
+  password               = random_password.db_password.result
   parameter_group_name   = aws_db_parameter_group.db_parameter_group.name
   db_subnet_group_name   = aws_db_subnet_group.db_subnet_group.name
   vpc_security_group_ids = [aws_security_group.db_sg.id]
@@ -305,6 +403,7 @@ resource "aws_db_instance" "csye6225_db" {
   multi_az               = false
   skip_final_snapshot    = true
   storage_encrypted      = true
+  kms_key_id             = aws_kms_key.rds_key.arn
 
   tags = {
     Name        = "CSYE6225 Database"
@@ -360,10 +459,68 @@ resource "aws_iam_policy" "s3_access_policy" {
   })
 }
 
-# Attach policy to role
+# IAM Policy for Secrets Manager access
+resource "aws_iam_policy" "secrets_access_policy" {
+  name        = "secrets_access_policy"
+  description = "Policy for EC2 instance to access Secrets Manager"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Effect   = "Allow"
+        Resource = aws_secretsmanager_secret.db_password_secret.arn
+      }
+    ]
+  })
+}
+
+# KMS access policy for EC2
+resource "aws_iam_policy" "kms_access_policy" {
+  name        = "kms_access_policy"
+  description = "Policy for EC2 instance to use KMS keys"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Effect = "Allow"
+        Resource = [
+          aws_kms_key.ec2_key.arn,
+          aws_kms_key.s3_key.arn,
+          aws_kms_key.rds_key.arn,
+          aws_kms_key.secrets_key.arn
+        ]
+      }
+    ]
+  })
+}
+
+# Attach policies to role
 resource "aws_iam_role_policy_attachment" "s3_policy_attachment" {
   role       = aws_iam_role.ec2_s3_role.name
   policy_arn = aws_iam_policy.s3_access_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "kms_policy_attachment" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.kms_access_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "secrets_policy_attachment" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.secrets_access_policy.arn
 }
 
 # EC2 Instance Profile
@@ -449,7 +606,7 @@ resource "aws_lb_target_group" "app_tg" {
   }
 }
 
-# Load Balancer Listener
+# Load Balancer HTTP Listener
 resource "aws_lb_listener" "app_listener" {
   load_balancer_arn = aws_lb.app_lb.arn
   port              = 80
@@ -461,12 +618,45 @@ resource "aws_lb_listener" "app_listener" {
   }
 }
 
-# Launch Template for Auto Scaling Group
+# SSL certificate ARN variable - commented out until certificate is available
+# variable "ssl_certificate_arn" {
+#   description = "ARN of the imported SSL certificate"
+#   type        = string
+#   default     = ""
+# }
+
+# Load Balancer HTTPS Listener - commented out until certificate is available
+# resource "aws_lb_listener" "https_listener" {
+#   load_balancer_arn = aws_lb.app_lb.arn
+#   port              = 443
+#   protocol          = "HTTPS"
+#   ssl_policy        = "ELBSecurityPolicy-2016-08"
+#   certificate_arn   = var.ssl_certificate_arn
+#
+#   default_action {
+#     type             = "forward"
+#     target_group_arn = aws_lb_target_group.app_tg.arn
+#   }
+# }
+
+# Launch Template for Auto Scaling Group with KMS encryption
 resource "aws_launch_template" "app_launch_template" {
   name          = "csye6225_asg"
-  image_id      = data.aws_ami.custom_app_ami.id
+  image_id      = "ami-0ae4d60b84a0b35ba"
   instance_type = var.instance_type
   key_name      = var.key_name
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = 25
+      volume_type           = "gp2"
+      delete_on_termination = true
+      encrypted             = true
+      kms_key_id            = aws_kms_key.ec2_key.arn
+    }
+  }
 
   network_interfaces {
     associate_public_ip_address = true
@@ -479,13 +669,16 @@ resource "aws_launch_template" "app_launch_template" {
 
   user_data = base64encode(<<-EOF
 #!/bin/bash
+# Retrieve DB password from Secrets Manager
+DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_password_secret.name} --region ${var.aws_region} --query SecretString --output text)
+
 # Create environment file for application
 cat > /etc/environment <<EOL
 DB_HOST=${aws_db_instance.csye6225_db.address}
 DB_PORT=${var.db_port}
 DB_NAME=${aws_db_instance.csye6225_db.db_name}
 DB_USER=${aws_db_instance.csye6225_db.username}
-DB_PASSWORD=${var.db_password}
+DB_PASSWORD=$DB_PASSWORD
 S3_BUCKET=${aws_s3_bucket.app_bucket.bucket}
 AWS_REGION=${var.aws_region}
 EOL
@@ -537,10 +730,10 @@ EOF
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "app_asg" {
-  name             = "app-auto-scaling-group"
-  min_size         = 3
-  max_size         = 5
-  desired_capacity = 3
+  name             = "app-auto-scaling-group-new"
+  min_size         = 1
+  max_size         = 2
+  desired_capacity = 2
 
   vpc_zone_identifier = aws_subnet.public[*].id
   target_group_arns   = [aws_lb_target_group.app_tg.arn]
@@ -592,7 +785,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
   period              = 60
   statistic           = "Average"
   threshold           = 18
-  alarm_description   = "Scale up when CPU exceeds 5%"
+  alarm_description   = "Scale up when CPU exceeds 18%"
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.app_asg.name
@@ -610,7 +803,7 @@ resource "aws_cloudwatch_metric_alarm" "low_cpu" {
   period              = 60
   statistic           = "Average"
   threshold           = 12
-  alarm_description   = "Scale down when CPU is below3%"
+  alarm_description   = "Scale down when CPU is below 12%"
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.app_asg.name
