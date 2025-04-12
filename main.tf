@@ -710,6 +710,8 @@ systemctl status amazon-cloudwatch-agent --no-pager
 echo "Webapp service status:"
 systemctl status webapp --no-pager
 
+
+sudo systemctl restart webapp.service
 echo "EC2 user data script completed"
 EOF
   )
