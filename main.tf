@@ -111,7 +111,7 @@ resource "random_password" "db_password" {
 resource "aws_secretsmanager_secret" "db_password_secret" {
   name                    = "${var.environment}/database/password"
   kms_key_id              = aws_kms_key.secrets_key.arn
-  recovery_window_in_days = 0 
+  recovery_window_in_days = 0
 
   tags = {
     Name        = "database-password-secret"
@@ -710,8 +710,6 @@ systemctl status amazon-cloudwatch-agent --no-pager
 echo "Webapp service status:"
 systemctl status webapp --no-pager
 
-
-sudo systemctl restart webapp.service
 
 sudo systemctl restart webapp.service
 
