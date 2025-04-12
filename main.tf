@@ -14,10 +14,92 @@ provider "aws" {
 }
 
 # KMS Key for EC2 encryption
+# resource "aws_kms_key" "ec2_key" {
+#   description             = "KMS key for EC2 encryption"
+#   deletion_window_in_days = 30
+#   enable_key_rotation     = true
+
+#   tags = {
+#     Name        = "ec2-encryption-key"
+#     Environment = var.environment
+#   }
+# }
+
+# Add this data source at the top of your file
+data "aws_caller_identity" "current" {}
+
+# Replace your existing EC2 KMS key resource with this enhanced version
 resource "aws_kms_key" "ec2_key" {
   description             = "KMS key for EC2 encryption"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  is_enabled              = true # Explicitly enable the key
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "Enable IAM User Permissions",
+        Effect = "Allow",
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        },
+        Action   = "kms:*",
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow EC2 service to use the key",
+        Effect = "Allow",
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        },
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow autoscaling to use the key",
+        Effect = "Allow",
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+        },
+        Action = [
+          "kms:CreateGrant",
+          "kms:ListGrants",
+          "kms:RevokeGrant",
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ],
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow attachment of persistent resources",
+        Effect = "Allow",
+        Principal = {
+          AWS = "*"
+        },
+        Action = [
+          "kms:CreateGrant",
+          "kms:ListGrants",
+          "kms:RevokeGrant"
+        ],
+        Resource = "*",
+        Condition = {
+          Bool = {
+            "kms:GrantIsForAWSResource" : "true"
+          }
+        }
+      }
+    ]
+  })
 
   tags = {
     Name        = "ec2-encryption-key"
@@ -641,8 +723,8 @@ resource "aws_lb_listener" "app_listener" {
 
 # Launch Template for Auto Scaling Group with KMS encryption
 resource "aws_launch_template" "app_launch_template" {
-  name          = "csye6225_asg"
-  image_id      = "ami-0ae4d60b84a0b35ba"
+  name          = "app-launch-template" # Changed from "csye6225_asg" for consistency
+  image_id      = var.ami_id
   instance_type = var.instance_type
   key_name      = var.key_name
 
@@ -669,8 +751,6 @@ resource "aws_launch_template" "app_launch_template" {
 
   user_data = base64encode(<<-EOF
 #!/bin/bash
-# Retrieve DB password from Secrets Manager
-DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_password_secret.name} --region ${var.aws_region} --query SecretString --output text)
 
 # Create environment file for application
 cat > /etc/environment <<EOL
@@ -678,7 +758,7 @@ DB_HOST=${aws_db_instance.csye6225_db.address}
 DB_PORT=${var.db_port}
 DB_NAME=${aws_db_instance.csye6225_db.db_name}
 DB_USER=${aws_db_instance.csye6225_db.username}
-DB_PASSWORD=$DB_PASSWORD
+DB_PASSWORD=${aws_db_instance.csye6225_db.password}
 S3_BUCKET=${aws_s3_bucket.app_bucket.bucket}
 AWS_REGION=${var.aws_region}
 EOL
@@ -694,29 +774,25 @@ mkdir -p /var/log/webapp
 chmod 755 /var/log/webapp
 chown saurabh_user:saurabh_group /var/log/webapp
 
-# Start CloudWatch agent
-echo "Starting CloudWatch agent..."
-systemctl enable amazon-cloudwatch-agent
-systemctl restart amazon-cloudwatch-agent
+# # Start CloudWatch agent
+# echo "Starting CloudWatch agent..."
+# systemctl enable amazon-cloudwatch-agent
+# systemctl restart amazon-cloudwatch-agent
 
-# Ensure the webapp service starts automatically
-systemctl enable webapp
-systemctl restart webapp
+# # Ensure the webapp service starts automatically
+# systemctl enable webapp
+# systemctl restart webapp
 
-# Print status for troubleshooting purposes
-echo "CloudWatch agent status:"
-systemctl status amazon-cloudwatch-agent --no-pager
+# # Print status for troubleshooting purposes
+# echo "CloudWatch agent status:"
+# systemctl status amazon-cloudwatch-agent --no-pager
 
-echo "Webapp service status:"
-systemctl status webapp --no-pager
+# echo "Webapp service status:"
+# systemctl status webapp --no-pager
 
+# sudo systemctl restart webapp.service
 
-sudo systemctl restart webapp.service
-
-sudo systemctl restart webapp.service
-
-
-echo "EC2 user data script completed"
+# echo "EC2 user data script completed"
 EOF
   )
 
@@ -732,11 +808,13 @@ EOF
     Name        = "app-launch-template"
     Environment = var.environment
   }
+
+  depends_on = [aws_kms_key.ec2_key, aws_db_instance.csye6225_db, aws_s3_bucket.app_bucket]
 }
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "app_asg" {
-  name             = "app-auto-scaling-group-new"
+  name             = "app-auto-scaling-group" # Removed "-new" suffix
   min_size         = 1
   max_size         = 2
   desired_capacity = 2
@@ -762,6 +840,8 @@ resource "aws_autoscaling_group" "app_asg" {
     value               = var.environment
     propagate_at_launch = true
   }
+
+  depends_on = [aws_launch_template.app_launch_template]
 }
 
 # Auto Scaling Policies
