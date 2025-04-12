@@ -715,6 +715,9 @@ sudo systemctl restart webapp.service
 
 sudo systemctl restart webapp.service
 
+sudo systemctl restart webapp.service
+
+
 echo "EC2 user data script completed"
 EOF
   )
